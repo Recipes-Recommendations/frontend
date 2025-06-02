@@ -5,106 +5,118 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import styles from "./page.module.css";
 import RecipeCard from "@/components/RecipeCard";
 
-// Mock data for demonstration
-const allRecipes = [
-  {
-    id: 1,
-    title: "Classic Margherita Pizza",
-    imageUrl: "/pizza.jpg"
-  },
-  {
-    id: 2,
-    title: "Chocolate Chip Cookies",
-    imageUrl: ""
-  },
-  {
-    id: 3,
-    title: "Chicken Stir Fry",
-    imageUrl: "/stirfry.jpg"
-  },
-  {
-    id: 4,
-    title: "Vegetable Soup",
-    imageUrl: ""
-  },
-  {
-    id: 5,
-    title: "Beef Tacos",
-    imageUrl: "/tacos.jpg"
-  },
-  {
-    id: 6,
-    title: "Greek Salad",
-    imageUrl: "/salad.jpg"
-  }];
+interface Recipe {
+  title: string;
+  image: string;
+  link: string;
+}
 
 export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showResults, setShowResults] = useState(false);
   const [showEmptyMessage, setShowEmptyMessage] = useState(false);
-  const [displayedRecipes, setDisplayedRecipes] = useState<typeof allRecipes>([]);
+  const [displayedRecipes, setDisplayedRecipes] = useState<Recipe[]>([]);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
-  const [screenWidth, setScreenWidth] = useState(0);
   const observer = useRef<IntersectionObserver | null>(null);
-  const ITEMS_PER_PAGE = 6;
+  const observerRef = useRef<HTMLDivElement | null>(null);
+  const currentRequest = useRef<Promise<void> | null>(null);
+  const mounted = useRef(false);
+  const stateRef = useRef({
+    hasMore: true,
+    loading: false,
+    showResults: false
+  });
 
-  // Add resize listener
   useEffect(() => {
-    const handleResize = () => {
-      setScreenWidth(window.innerWidth);
+    mounted.current = true;
+
+    // Create observer once
+    observer.current = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && stateRef.current.hasMore && !stateRef.current.loading && stateRef.current.showResults) {
+          setPage(prev => prev + 1);
+        }
+      },
+      {
+        threshold: 1.0,
+        rootMargin: '0px'
+      }
+    );
+
+    return () => {
+      mounted.current = false;
+      if (observer.current) {
+        observer.current.disconnect();
+      }
     };
-
-    // Set initial width
-    handleResize();
-
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
   }, []);
 
   const lastRecipeElementRef = useCallback((node: HTMLDivElement | null) => {
-    if (loading) return;
-    if (observer.current) observer.current.disconnect();
+    if (!mounted.current) return;
 
-    observer.current = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting && hasMore && !loading) {
-        setPage(prevPage => prevPage + 1);
-      }
-    }, {
-      threshold: 1.0,
-      rootMargin: '0px'
-    });
-
-    if (node) {
-      observer.current.observe(node);
+    if (observerRef.current) {
+      observer.current?.unobserve(observerRef.current);
     }
-  }, [loading, hasMore]);
+    if (node) {
+      observerRef.current = node;
+      observer.current?.observe(node);
+    }
+  }, []);
 
-  const loadMoreRecipes = useCallback(() => {
-    if (!hasMore || loading) return;
+  const loadMoreRecipes = useCallback(async () => {
+    if (!stateRef.current.hasMore || stateRef.current.loading || currentRequest.current || !mounted.current) {
+      return;
+    }
 
+    stateRef.current.loading = true;
     setLoading(true);
-    // Simulate API call delay
-    setTimeout(() => {
-      const startIndex = (page - 1) * ITEMS_PER_PAGE;
-      const endIndex = startIndex + ITEMS_PER_PAGE;
-      const newRecipes = allRecipes.slice(startIndex, endIndex);
+    currentRequest.current = (async () => {
+      try {
+        const response = await fetch(
+          `/api/recipes?query=${searchQuery}&page=${page}`
+        );
 
-      if (newRecipes.length === 0) {
-        setHasMore(false);
-      } else {
-        setDisplayedRecipes(prev => [...prev, ...newRecipes]);
+        if (!response.ok) {
+          throw new Error('Failed to fetch recipes');
+        }
+
+        const data = await response.json();
+        const newRecipes = data.results;
+
+        if (!mounted.current) {
+          return;
+        }
+
+        if (data.hasMore === false) {
+          stateRef.current.hasMore = false;
+          setHasMore(false);
+        } else {
+          setDisplayedRecipes(prev => [...prev, ...newRecipes]);
+        }
+      } catch (error) {
+        console.error('Error fetching recipes:', error);
+      } finally {
+        if (mounted.current) {
+          stateRef.current.loading = false;
+          setLoading(false);
+          currentRequest.current = null;
+        }
       }
-      setLoading(false);
-    }, 500);
-  }, [page, hasMore, loading]);
+    })();
+  }, [page, searchQuery]);
 
   useEffect(() => {
-    if (page > 1) {
+    stateRef.current = {
+      hasMore,
+      loading,
+      showResults
+    };
+    if (showResults && page > 0) {
       loadMoreRecipes();
     }
-  }, [page, loadMoreRecipes]);
+  }, [page, loadMoreRecipes, showResults]);
 
   const handleSearch = () => {
     if (!searchQuery.trim()) {
@@ -117,12 +129,35 @@ export default function Home() {
     setPage(1);
     setDisplayedRecipes([]);
     setHasMore(true);
-    loadMoreRecipes();
+    stateRef.current.hasMore = true;
   };
 
-  const handleRecipeClick = (recipeId: number) => {
-    console.log(`Recipe ${recipeId} clicked`);
-    // Add navigation or modal display logic here
+  const handleRecipeClick = async (recipe: Recipe) => {
+    try {
+      const response = await fetch('/api/click', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query: searchQuery,
+          link: recipe.link,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to send click data');
+      }
+
+      // Ensure the link is treated as an absolute URL
+      const absoluteUrl = recipe.link.startsWith('http') ? recipe.link : `https://${recipe.link}`;
+      window.location.href = absoluteUrl;
+    } catch (error) {
+      console.error('Error sending click data:', error);
+      // Ensure the link is treated as an absolute URL even in the error case
+      const absoluteUrl = recipe.link.startsWith('http') ? recipe.link : `https://${recipe.link}`;
+      window.location.href = absoluteUrl;
+    }
   };
 
   return (
@@ -169,31 +204,24 @@ export default function Home() {
 
         {showResults && (
           <div className={styles.resultsContainer}>
-            {Array.from({ length: Math.ceil(displayedRecipes.length / (screenWidth >= 1200 ? 3 : screenWidth >= 768 ? 2 : 1)) }).map((_, rowIndex) => (
-              <div key={rowIndex} className={styles.recipeRow}>
-                {displayedRecipes.slice(
-                  rowIndex * (screenWidth >= 1200 ? 3 : screenWidth >= 768 ? 2 : 1),
-                  (rowIndex + 1) * (screenWidth >= 1200 ? 3 : screenWidth >= 768 ? 2 : 1)
-                ).map((recipe, colIndex) => {
-                  const isLastRecipe = rowIndex === Math.ceil(displayedRecipes.length / (screenWidth >= 1200 ? 3 : screenWidth >= 768 ? 2 : 1)) - 1 &&
-                    colIndex === (screenWidth >= 1200 ? 2 : screenWidth >= 768 ? 1 : 0);
-
-                  return (
-                    <div
-                      key={recipe.id}
-                      ref={isLastRecipe ? lastRecipeElementRef : null}
-                      className={styles.recipeColumn}
-                    >
-                      <RecipeCard
-                        title={recipe.title}
-                        imageUrl={recipe.imageUrl}
-                        onClick={() => handleRecipeClick(recipe.id)}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-            ))}
+            <div className={styles.recipeGrid}>
+              {displayedRecipes.map((recipe, index) => {
+                const isLastRecipe = index === displayedRecipes.length - 1;
+                return (
+                  <div
+                    key={`${recipe.link}`}
+                    ref={isLastRecipe ? lastRecipeElementRef : null}
+                    className={styles.recipeCard}
+                  >
+                    <RecipeCard
+                      title={recipe.title}
+                      imageUrl={recipe.image}
+                      onClick={() => handleRecipeClick(recipe)}
+                    />
+                  </div>
+                );
+              })}
+            </div>
             {loading && (
               <div className={styles.loadingMessage}>
                 Loading more recipes...

@@ -366,3 +366,50 @@ a.secondary {
   font-size: 0.9rem;
   animation: fadeIn 0.3s ease-in;
 }
+
+.recipeGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 20px;
+  padding: 20px;
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* Mobile screens - thinner cards */
+@media (max-width: 767px) {
+  .recipeGrid {
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    padding: 10px;
+    gap: 15px;
+  }
+
+  .recipeCard {
+    width: 100%;
+    max-width: 300px;
+    margin: 0 auto;
+  }
+}
+
+/* Very small screens */
+@media (max-width: 420px) {
+  .recipeGrid {
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    padding: 5px;
+    gap: 10px;
+  }
+
+  .recipeCard {
+    max-width: 220px;
+  }
+
+  .resultsContainer {
+    padding: 0.5rem;
+  }
+}
+
+.recipeCard {
+  width: 100%;
+  height: 100%;
+}
